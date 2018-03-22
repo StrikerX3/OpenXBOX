@@ -50,7 +50,7 @@ USBOHCIDevice::~USBOHCIDevice() {
     StopBus();
 
     if (m_async_td) {
-        usb_cancel_packet(&m_usbPacket);
+        m_usbPacket.Cancel();
         m_async_td = 0;
     }
     StopEndpoints();
@@ -135,13 +135,13 @@ void USBOHCIDevice::RootHubReset() {
 
     for (uint8_t i = 0; i < m_numPorts; i++) {
         OHCIPort *port = &m_rhport[i];
-        port->ctrl = 0;
-        if (port->port.dev && port->port.dev->attached) {
-            usb_port_reset(&port->port);
+        port->m_ctrl = 0;
+        if (port->GetDevice() && port->GetDevice()->IsAttached()) {
+            port->Reset();
         }
     }
     if (m_async_td) {
-        usb_cancel_packet(&m_usbPacket);
+        m_usbPacket.Cancel();
         m_async_td = 0;
     }
     StopEndpoints();
@@ -223,15 +223,15 @@ void USBOHCIDevice::SetFrameInterval(uint16_t value) {
 
 void USBOHCIDevice::SetPortStatus(uint8_t portNum, uint32_t value) {
     OHCIPort *port = &m_rhport[portNum];
-    uint32_t oldState = port->ctrl;
+    uint32_t oldState = port->m_ctrl;
 
     // Write to clear CSC, PESC, PSSC, OCIC, PRSC
     if (value & OHCI_PORT_WTC) {
-        port->ctrl &= ~(value & OHCI_PORT_WTC);
+        port->m_ctrl &= ~(value & OHCI_PORT_WTC);
     }
 
     if (value & OHCI_PORT_CCS) {
-        port->ctrl &= ~OHCI_PORT_PES;
+        port->m_ctrl &= ~OHCI_PORT_PES;
     }
 
     ohci_port_set_if_connected(ohci, portNum, value & OHCI_PORT_PES);
@@ -242,10 +242,10 @@ void USBOHCIDevice::SetPortStatus(uint8_t portNum, uint32_t value) {
 
     if (ohci_port_set_if_connected(ohci, portNum, value & OHCI_PORT_PRS)) {
         log_spew("USBOHCIDevice::SetPortStatus: Port %u reset\n", portNum);
-        usb_device_reset(port->port.dev);
-        port->ctrl &= ~OHCI_PORT_PRS;
+        port->GetDevice()->Reset();
+        port->m_ctrl &= ~OHCI_PORT_PRS;
         // Should this also set OHCI_PORT_PESC?
-        port->ctrl |= OHCI_PORT_PES | OHCI_PORT_PRSC;
+        port->m_ctrl |= OHCI_PORT_PES | OHCI_PORT_PRSC;
     }
 
     // Invert order here to ensure in ambiguous case, device is powered up
@@ -256,17 +256,17 @@ void USBOHCIDevice::SetPortStatus(uint8_t portNum, uint32_t value) {
         PortPower(portNum, true);
     }
 
-    if (oldState != port->ctrl) {
+    if (oldState != port->m_ctrl) {
         SetInterrupt(OHCI_INTR_RHSC);
     }
 }
 
 void USBOHCIDevice::PortPower(uint8_t index, bool powered) {
     if (powered) {
-        m_rhport[index].ctrl |= OHCI_PORT_PPS;
+        m_rhport[index].m_ctrl |= OHCI_PORT_PPS;
     }
     else {
-        m_rhport[index].ctrl &= ~(OHCI_PORT_PPS |
+        m_rhport[index].m_ctrl &= ~(OHCI_PORT_PPS |
             OHCI_PORT_CCS |
             OHCI_PORT_PSS |
             OHCI_PORT_PRS);
@@ -283,12 +283,12 @@ void USBOHCIDevice::StopBus() {
 
 void USBOHCIDevice::StopEndpoints() {
     for (uint8_t i = 0; i < m_numPorts; i++) {
-        USBDevice *dev = m_rhport[i].port.dev;
-        if (dev && dev->attached) {
-            usb_device_ep_stopped(dev, &dev->ep_ctl);
+        USBDevice *dev = m_rhport[i].GetDevice();
+        if (dev && dev->IsAttached()) {
+            dev->EndpointStopped(dev->GetControlEndpoint());
             for (uint8_t j = 0; j < USB_MAX_ENDPOINTS; j++) {
-                usb_device_ep_stopped(dev, &dev->ep_in[j]);
-                usb_device_ep_stopped(dev, &dev->ep_out[j]);
+                dev->EndpointStopped(dev->GetInEndpoint(j));
+                dev->EndpointStopped(dev->GetOutEndpoint(j));
             }
         }
     }
@@ -356,9 +356,9 @@ bool USBOHCIDevice::ServiceEndpointList(uint32_t head, bool completion) {
             // Cancel pending packets for ED that have been paused
             uint32_t addr = ed.head & OHCI_DPTR_MASK;
             if (m_async_td && addr == m_async_td) {
-                usb_cancel_packet(&m_usbPacket);
+                m_usbPacket.Cancel();
                 m_async_td = 0;
-                usb_device_ep_stopped(m_usbPacket.ep->dev, m_usbPacket.ep);
+                m_usbPacket.ep->dev->EndpointStopped(m_usbPacket.ep);
             }
             continue;
         }
@@ -442,7 +442,7 @@ void USBOHCIDevice::OnFrameBoundary() {
     // Cancel all pending packets if either of the lists has been disabled.
     if (m_oldCtl & (~m_ctl) & (OHCI_CTL_BLE | OHCI_CTL_CLE)) {
         if (m_async_td) {
-            usb_cancel_packet(&m_usbPacket);
+            m_usbPacket.Cancel();
             m_async_td = 0;
         }
         StopEndpoints();
@@ -508,7 +508,7 @@ void USBOHCIDevice::PCIMMIORead(int barIndex, uint32_t addr, uint32_t *value, ui
     
     if (addr >= 0x54 && addr < 0x54 + m_numPorts * 4) {
         // HcRhPortStatus
-        *value = m_rhport[(addr - 0x54) >> 2].ctrl | OHCI_PORT_PPS;
+        *value = m_rhport[(addr - 0x54) >> 2].m_ctrl | OHCI_PORT_PPS;
     }
     else {
         switch (addr >> 2) {

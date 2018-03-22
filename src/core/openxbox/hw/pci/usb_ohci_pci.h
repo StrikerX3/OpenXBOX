@@ -32,6 +32,7 @@
 #include "../defs.h"
 #include "../usb/defs.h"
 #include "../usb/usb.h"
+#include "../usb/bus.h"
 #include "../basic/irq.h"
 #include "pci.h"
 #include "openxbox/util/invoke_later.h"
@@ -44,6 +45,11 @@ namespace openxbox {
 #define OHCI_MAX_PORTS 15
 
 #define ED_LINK_LIMIT 32
+
+class OHCIPort : public USBPort {
+public:
+    uint32_t m_ctrl;
+};
 
 
 class USBOHCIDevice : public PCIDevice {
@@ -62,7 +68,12 @@ private:
     uint8_t m_numPorts;
     uint8_t m_firstPort;
 
+    const char *m_name = nullptr;
+
     // ---- OHCI state ----------
+
+    USBBus *m_bus = nullptr;
+    IRQ *m_irq = nullptr;
 
     InvokeLater *m_eofTimer;
     int64_t m_sofTime = 0;
@@ -97,7 +108,7 @@ private:
     uint32_t m_rhdesc_a = 0;
     uint32_t m_rhdesc_b = 0;
     uint32_t m_rhstatus = 0;
-    OHCIPort m_rhport[OHCI_MAX_PORTS] = { 0 };
+    OHCIPort m_rhport[OHCI_MAX_PORTS];
 
     // PXA27x Non-OHCI events
     uint32_t m_hstatus = 0;
