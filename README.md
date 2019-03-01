@@ -1,4 +1,4 @@
-**This project has been migrated to https://github.com/StrikerX3/viXen**
+**This project has been migrated to https://github.com/StrikerX3/StrikeBox**
 
 **If you're looking for a functional Xbox emulator, check out [XQEMU](http://xqemu.com/)
 or [Cxbx-Reloaded](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded).**
